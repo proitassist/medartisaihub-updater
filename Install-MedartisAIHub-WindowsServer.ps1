@@ -1,3 +1,4 @@
+Clear-Host
 $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
@@ -16,8 +17,9 @@ if (-not $nodeVersion) {
     Write-Host "Node.js installed! (You might need to restart the script if it still can't find 'node')" -ForegroundColor Green
     
     # Refresh environment variables in current session
-    $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-} else {
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+}
+else {
     Write-Host "[1/4] Node.js is already installed ($nodeVersion)" -ForegroundColor Green
 }
 
@@ -31,7 +33,8 @@ if (Test-Path $CredFile) {
     $CredContent = Get-Content $CredFile
     $GitHubUsername = ($CredContent | Select-String "Username:" | Out-String).Split(":")[-1].Trim()
     $PlainToken = ($CredContent | Select-String "Token:" | Out-String).Split(":")[-1].Trim()
-} else {
+}
+else {
     Write-Host "`n[2/4] Authentication Required" -ForegroundColor Cyan
     $GitHubUsername = Read-Host "Enter your GitHub Username"
     $GitHubToken = Read-Host "Enter your GitHub Personal Access Token (PAT)" -AsSecureString
@@ -42,7 +45,7 @@ if (Test-Path $CredFile) {
 
 $Headers = @{
     Authorization = "Bearer $PlainToken"
-    Accept = "application/vnd.github.v3+json"
+    Accept        = "application/vnd.github.v3+json"
 }
 
 # 3. Fetch latest release
@@ -51,7 +54,8 @@ $ReleasesUrl = "https://api.github.com/repos/proitassist/medartisaihub/releases/
 
 try {
     $Release = Invoke-RestMethod -Uri $ReleasesUrl -Headers $Headers
-} catch {
+}
+catch {
     Write-Host "Authentication failed! Make sure your PAT token is correct and has repo access." -ForegroundColor Red
     Remove-Item $CredFile -Force -ErrorAction SilentlyContinue
     Pause
@@ -69,18 +73,62 @@ if (-not $Asset) {
 $ZipPath = Join-Path $InstallDir "Medartis-Windows-Build.zip"
 Write-Host "Downloading the pre-compiled application ($($Asset.size / 1MB | ForEach-Object ToString "0.00") MB)..." -ForegroundColor Yellow
 
-$AssetHeaders = @{
-    Authorization = "Bearer $PlainToken"
-    Accept = "application/octet-stream"
-}
-Invoke-WebRequest -Uri $Asset.url -Headers $AssetHeaders -OutFile $ZipPath
+$request = [System.Net.WebRequest]::Create($Asset.url)
+$request.UserAgent = "MedartisAIHub-Installer"
+$request.Headers.Add("Authorization", "Bearer $PlainToken")
+$request.Accept = "application/octet-stream"
 
-Write-Host "Stopping any running instances of Medartis AI Hub..." -ForegroundColor Yellow
+$response = $request.GetResponse()
+$totalBytes = $response.ContentLength
+$stream = $response.GetResponseStream()
+
+$fileStream = [System.IO.File]::Create($ZipPath)
+$buffer = New-Object byte[] 81920
+$read = 0
+$downloadedBytes = 0
+$lastUpdate = [datetime]::Now
+
+while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+    $fileStream.Write($buffer, 0, $read)
+    $downloadedBytes += $read
+    
+    if (([datetime]::Now - $lastUpdate).TotalMilliseconds -gt 500) {
+        if ($totalBytes -gt 0) {
+            $percent = [math]::Round(($downloadedBytes / $totalBytes) * 100)
+            $downloadedMB = [math]::Round($downloadedBytes / 1MB, 2)
+            $totalMB = [math]::Round($totalBytes / 1MB, 2)
+            Write-Progress -Activity "Downloading Application" -Status "$percent% ($downloadedMB MB / $totalMB MB)" -PercentComplete $percent -Id 1
+        }
+        $lastUpdate = [datetime]::Now
+    }
+}
+
+$fileStream.Close()
+$stream.Close()
+$response.Close()
+Write-Progress -Activity "Downloading Application" -Completed -Id 1
+
+Write-Host "Stopping any running instances of Medartis AI Hub & Watchdog..." -ForegroundColor Yellow
+
+# Try to stop the Scheduled Task gracefully
+try {
+    Stop-ScheduledTask -TaskName "MedartisAIHub_Watchdog" -ErrorAction SilentlyContinue
+} catch {}
+
+# Stop any lingering powershell Watchdog processes
+$powershells = Get-WmiObject Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe'"
+foreach ($p in $powershells) {
+    if ($p.CommandLine -match "Watchdog") {
+        Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# Stop the node server itself
 Stop-Process -Name "node" -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
 
 Write-Host "Extracting application files..." -ForegroundColor Yellow
-Expand-Archive -Path $ZipPath -DestinationPath $InstallDir -Force
+& tar.exe -xf $ZipPath -C $InstallDir
 Remove-Item -Path $ZipPath -Force
 
 # 5. Create Desktop Shortcuts
@@ -117,7 +165,24 @@ $UpdateShortcut.Save()
 Write-Host "`n==========================================" -ForegroundColor Green
 Write-Host "  Installation Complete!                  " -ForegroundColor Green
 Write-Host "==========================================" -ForegroundColor Green
-Write-Host "You can now double click 'Start Medartis AI Hub' on your Desktop to run the app natively!"
-Write-Host "It will start a black window and host the application at http://localhost:3000"
-Write-Host ""
-Pause
+
+Write-Host "Restarting Medartis AI Hub Watchdog..." -ForegroundColor Yellow
+$taskStarted = $false
+try {
+    Start-ScheduledTask -TaskName "MedartisAIHub_Watchdog" -ErrorAction Stop
+    Write-Host "Watchdog scheduled task successfully restarted!" -ForegroundColor Green
+    $taskStarted = $true
+} catch {
+    Write-Host "Could not automatically start the Watchdog scheduled task." -ForegroundColor Yellow
+    Write-Host "If you haven't set it up yet, use the 'Start Medartis AI Hub' Desktop shortcut for now." -ForegroundColor Yellow
+}
+
+if (-not $taskStarted) {
+    Write-Host "Starting Medartis AI Hub manually..." -ForegroundColor Yellow
+    Start-Process -FilePath $StartBatPath
+    Write-Host "The application is opening in a new black window."
+}
+
+Start-Sleep -Seconds 4
+Write-Host "Opening application in default browser..." -ForegroundColor Yellow
+Start-Process "http://localhost:3000"
