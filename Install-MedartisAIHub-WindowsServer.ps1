@@ -183,6 +183,33 @@ if (-not $taskStarted) {
     Write-Host "The application is opening in a new black window."
 }
 
-Start-Sleep -Seconds 4
-Write-Host "Opening application in default browser..." -ForegroundColor Yellow
-Start-Process "http://localhost:3000"
+Write-Host "Waiting for Medartis AI Hub to boot up (this may take up to 20 seconds)..." -ForegroundColor Yellow
+$MaxWaitSeconds = 40
+$WaitCount = 0
+$AppIsUp = $false
+
+while ($WaitCount -lt $MaxWaitSeconds) {
+    try {
+        $request = [System.Net.WebRequest]::Create("http://localhost:3000")
+        $request.Timeout = 2000
+        $request.Method = "GET"
+        $response = $request.GetResponse()
+        $response.Close()
+        $AppIsUp = $true
+        break
+    } catch {
+        Start-Sleep -Seconds 2
+        $WaitCount += 2
+        Write-Host "." -NoNewline
+    }
+}
+
+Write-Host ""
+
+if ($AppIsUp) {
+    Write-Host "Application is online! Opening in default browser..." -ForegroundColor Green
+    Start-Process "http://localhost:3000"
+} else {
+    Write-Host "Application is taking longer than expected to start." -ForegroundColor Yellow
+    Write-Host "You can open http://localhost:3000 in your browser manually in a few moments." -ForegroundColor Yellow
+}
