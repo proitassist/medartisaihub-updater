@@ -1,7 +1,5 @@
 Clear-Host
 $ErrorActionPreference = "Stop"
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-[System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
 
 # Self-elevate if not running as Administrator
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -60,8 +58,9 @@ else {
 }
 
 $Headers = @{
-    Authorization = "Bearer $PlainToken"
+    Authorization = "token $PlainToken"
     Accept        = "application/vnd.github.v3+json"
+    "User-Agent"  = "MedartisAIHub-Installer"
 }
 
 # 3. Fetch latest release
@@ -80,8 +79,14 @@ try {
     }
 }
 catch {
-    Write-Host "Authentication failed! Make sure your PAT token is correct and has repo access." -ForegroundColor Red
-    Remove-Item $CredFile -Force -ErrorAction SilentlyContinue
+    Write-Host ""
+    Write-Host "GitHub API Request Failed!" -ForegroundColor Red
+    Write-Host "Error Details: $($_.Exception.Message)" -ForegroundColor Red
+    if ($_.ErrorDetails) {
+        Write-Host "Response from GitHub: $($_.ErrorDetails.Message)" -ForegroundColor Yellow
+    }
+    Write-Host "If this says 'Not Found', your PAT token might not have 'repo' access or the repository is fully empty." -ForegroundColor Yellow
+    Write-Host ""
     Pause
     exit
 }
@@ -99,7 +104,7 @@ Write-Host "Downloading the pre-compiled application ($($Asset.size / 1MB | ForE
 
 $request = [System.Net.WebRequest]::Create($Asset.url)
 $request.UserAgent = "MedartisAIHub-Installer"
-$request.Headers.Add("Authorization", "Bearer $PlainToken")
+$request.Headers.Add("Authorization", "token $PlainToken")
 $request.Accept = "application/octet-stream"
 
 $response = $request.GetResponse()
