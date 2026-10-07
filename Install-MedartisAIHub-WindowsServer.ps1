@@ -1,6 +1,22 @@
 Clear-Host
 $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+[System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+
+# Self-elevate if not running as Administrator
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Write-Host "Administrator privileges are required. Requesting elevation..." -ForegroundColor Yellow
+    if ($PSCommandPath) {
+        Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
+    } else {
+        # Fallback if running via pipeline
+        $scriptPath = "$env:TEMP\updater_elevated.ps1"
+        $MyInvocation.MyCommand.ScriptBlock.ToString() | Out-File $scriptPath
+        Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -File `"$scriptPath`"" -Verb RunAs
+    }
+    exit
+}
 
 Write-Host "=========================================="
 Write-Host "  Medartis AI Hub - Windows Server Installer"
@@ -54,6 +70,14 @@ $ReleasesUrl = "https://api.github.com/repos/proitassist/medartisaihub/releases/
 
 try {
     $Release = Invoke-RestMethod -Uri $ReleasesUrl -Headers $Headers
+    
+    # Also fetch the friendly app version from the version.json file
+    try {
+        $VersionJson = Invoke-RestMethod -Uri "https://raw.githubusercontent.com/proitassist/medartisaihub-updater/main/version.json" -UseBasicParsing
+        Write-Host "Discovered cloud version: $($VersionJson.version)" -ForegroundColor Green
+    } catch {
+        Write-Host "Discovered cloud build: $($Release.tag_name)" -ForegroundColor Green
+    }
 }
 catch {
     Write-Host "Authentication failed! Make sure your PAT token is correct and has repo access." -ForegroundColor Red
@@ -137,8 +161,14 @@ $StartBatPath = Join-Path $InstallDir "Start-Medartis.bat"
 $StartBatContent = @"
 @echo off
 echo Starting Medartis AI Hub on Windows Server...
+
+echo Stopping any background node processes, Watchdog, and freeing port 3000...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Stop-ScheduledTask -TaskName 'MedartisAIHub_Watchdog' -ErrorAction SilentlyContinue } catch {}; Get-WmiObject Win32_Process -Filter 'Name=''powershell.exe'' OR Name=''pwsh.exe''' | Where-Object { `$_.CommandLine -match 'Watchdog' } | ForEach-Object { Stop-Process -Id `$_.ProcessId -Force -ErrorAction SilentlyContinue }; Get-WmiObject Win32_Process -Filter 'Name=''node.exe''' | Where-Object { `$_.CommandLine -match 'MedartisAIHub' -or `$_.CommandLine -match 'server.js' } | ForEach-Object { Stop-Process -Id `$_.ProcessId -Force -ErrorAction SilentlyContinue }; Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id `$_.OwningProcess -Force -ErrorAction SilentlyContinue }"
+
 cd /d "C:\MedartisAIHub"
 set NODE_ENV=production
+
+start /B powershell -NoProfile -Command "Start-Sleep -Seconds 4; Start-Process 'https://localhost:3000'"
 node server.js
 pause
 "@
@@ -178,9 +208,7 @@ try {
 }
 
 if (-not $taskStarted) {
-    Write-Host "Starting Medartis AI Hub manually..." -ForegroundColor Yellow
-    Start-Process -FilePath $StartBatPath
-    Write-Host "The application is opening in a new black window."
+    Write-Host "Please start Medartis AI Hub manually using the Desktop shortcut." -ForegroundColor Yellow
 }
 
 Write-Host "Waiting for Medartis AI Hub to boot up (this may take up to 20 seconds)..." -ForegroundColor Yellow
@@ -208,8 +236,8 @@ Write-Host ""
 
 if ($AppIsUp) {
     Write-Host "Application is online! Opening in default browser..." -ForegroundColor Green
-    Start-Process "http://localhost:3000"
+    Start-Process "https://localhost:3000"
 } else {
     Write-Host "Application is taking longer than expected to start." -ForegroundColor Yellow
-    Write-Host "You can open http://localhost:3000 in your browser manually in a few moments." -ForegroundColor Yellow
+    Write-Host "You can open https://localhost:3000 in your browser manually in a few moments." -ForegroundColor Yellow
 }

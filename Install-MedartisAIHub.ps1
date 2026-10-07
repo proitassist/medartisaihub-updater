@@ -145,7 +145,7 @@ Write-Host "[5/5] Creating Desktop Shortcut..." -ForegroundColor Yellow
 $WshShell = New-Object -comObject WScript.Shell
 $DesktopPath = [Environment]::GetFolderPath("Desktop")
 $Shortcut = $WshShell.CreateShortcut("$DesktopPath\Medartis AI Hub.lnk")
-$Shortcut.TargetPath = "http://localhost:3000"
+$Shortcut.TargetPath = "https://localhost:3000"
 $Shortcut.Description = "Open Medartis AI Hub"
 $Shortcut.IconLocation = "%SystemRoot%\System32\SHELL32.dll,14" # Globe icon
 $Shortcut.Save()
@@ -156,7 +156,7 @@ Write-Host "  Installation Complete!                  " -ForegroundColor Green
 Write-Host "==========================================" -ForegroundColor Green
 Write-Host "The application is now running securely in the background."
 Write-Host "You can access it anytime by double-clicking the 'Medartis AI Hub' shortcut on your Desktop!" -ForegroundColor Cyan
-Write-Host "Or by visiting: http://localhost:3000"
+Write-Host "Or by visiting: https://localhost:3000"
 Write-Host ""
 Write-Host "Press any key to exit..."
 $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown") | Out-Null
