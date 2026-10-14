@@ -73,6 +73,9 @@ Write-Log "Watchdog started. Monitoring $AppUrl"
 Kill-App
 Start-App
 
+# Allow self-signed certificates for local HTTPS health check
+[System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+
 while ($true) {
     Start-Sleep -Seconds 5
     
