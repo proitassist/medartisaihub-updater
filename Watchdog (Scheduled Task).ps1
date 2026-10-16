@@ -23,7 +23,7 @@
 # 5. Settings Tab: Uncheck "Stop the task if it runs longer than: 3 days".
 # ==============================================================================
 
-$AppUrl = "http://127.0.0.1:3000"
+$AppUrl = "https://127.0.0.1:3000"
 $InstallDir = "C:\MedartisAIHub"
 $LogFile = "$InstallDir\Watchdog.log"
 $MaxConsecutiveRestarts = 5
