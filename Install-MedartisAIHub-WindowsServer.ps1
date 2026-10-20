@@ -221,10 +221,11 @@ $MaxWaitSeconds = 40
 $WaitCount = 0
 $AppIsUp = $false
 
+[System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
 while ($WaitCount -lt $MaxWaitSeconds) {
     try {
-        $request = [System.Net.WebRequest]::Create("http://localhost:3000")
-        $request.Timeout = 2000
+        $request = [System.Net.WebRequest]::Create("https://localhost:3000/api/health")
+        $request.Timeout = 3000
         $request.Method = "GET"
         $response = $request.GetResponse()
         $response.Close()

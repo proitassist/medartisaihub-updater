@@ -23,10 +23,11 @@
 # 5. Settings Tab: Uncheck "Stop the task if it runs longer than: 3 days".
 # ==============================================================================
 
-$AppUrl = "https://127.0.0.1:3000"
+$AppUrl = "https://127.0.0.1:3000/api/health"
 $InstallDir = "C:\MedartisAIHub"
 $LogFile = "$InstallDir\Watchdog.log"
 $MaxConsecutiveRestarts = 5
+$MaxConsecutiveFailuresBeforeRestart = 3
 
 function Write-Log($Message) {
     $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
@@ -67,6 +68,7 @@ function Kill-App {
 }
 
 $ConsecutiveRestarts = 0
+$ConsecutiveFailures = 0
 Write-Log "Watchdog started. Monitoring $AppUrl"
 
 # Initial cleanup and start
@@ -77,36 +79,44 @@ Start-App
 [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
 
 while ($true) {
-    Start-Sleep -Seconds 5
+    Start-Sleep -Seconds 10
     
     try {
-        # Create request with tight timeout
+        # Create request to dedicated lightweight health endpoint
         $request = [System.Net.WebRequest]::Create($AppUrl)
-        $request.Timeout = 10000 # 10 seconds max wait
+        $request.Timeout = 25000 # 25 seconds timeout
         $request.Method = "GET"
         
         $response = $request.GetResponse()
         $response.Close()
         
-        # If no exception was thrown, the app is responsive
+        # If no exception was thrown, the app is healthy
+        if ($ConsecutiveFailures -gt 0) {
+            Write-Log "Application responded successfully to health check. Resetting failure counter."
+            $ConsecutiveFailures = 0
+        }
         if ($ConsecutiveRestarts -gt 0) {
-            Write-Log "Application is responsive again. Resetting restart counter."
+            Write-Log "Application is stable again. Resetting restart counter."
             $ConsecutiveRestarts = 0
         }
     }
     catch {
-        Write-Log "Health check failed: $($_.Exception.Message)"
+        $ConsecutiveFailures++
+        Write-Log "Health check failed (attempt $ConsecutiveFailures / $MaxConsecutiveFailuresBeforeRestart): $($_.Exception.Message)"
         
-        $ConsecutiveRestarts++
-        Write-Log "Consecutive restarts: $ConsecutiveRestarts / $MaxConsecutiveRestarts"
-        
-        if ($ConsecutiveRestarts -ge $MaxConsecutiveRestarts) {
-            Write-Log "CRITICAL: Reached maximum consecutive restarts ($MaxConsecutiveRestarts). Watchdog will stop trying for 5 minutes to prevent CPU spinning."
-            Start-Sleep -Seconds 300
-            $ConsecutiveRestarts = 0 # Reset to try again later
+        if ($ConsecutiveFailures -ge $MaxConsecutiveFailuresBeforeRestart) {
+            $ConsecutiveFailures = 0
+            $ConsecutiveRestarts++
+            Write-Log "Health check failed $MaxConsecutiveFailuresBeforeRestart consecutive times. Triggering restart ($ConsecutiveRestarts / $MaxConsecutiveRestarts)..."
+            
+            if ($ConsecutiveRestarts -ge $MaxConsecutiveRestarts) {
+                Write-Log "CRITICAL: Reached maximum consecutive restarts ($MaxConsecutiveRestarts). Watchdog will pause for 5 minutes to prevent CPU spinning."
+                Start-Sleep -Seconds 300
+                $ConsecutiveRestarts = 0 # Reset to try again later
+            }
+            
+            Kill-App
+            Start-App
         }
-        
-        Kill-App
-        Start-App
     }
 }
